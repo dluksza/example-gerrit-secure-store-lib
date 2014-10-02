@@ -1,5 +1,6 @@
 package com.collabnet.gerrit;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.gerrit.common.FileUtil;
 import com.google.gerrit.server.config.SitePaths;
 import com.google.gerrit.server.securestore.SecureStore;
@@ -13,10 +14,11 @@ import org.eclipse.jgit.util.FS;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 @Singleton
-public class SecureStoreLib implements SecureStore {
+public class SecureStoreLib extends SecureStore {
   private static final String PREFIX = "test-";
   private final FileBasedConfig sec;
 
@@ -32,34 +34,27 @@ public class SecureStoreLib implements SecureStore {
   }
 
   @Override
-  public String get(String section, String subsection, String name) {
-    String value = sec.getString(section, subsection, name);
-    if (value != null && value.startsWith(PREFIX)) {
-      return value.substring(PREFIX.length());
-    }
-    return value;
-  }
-
-  @Override
   public String[] getList(String section, String subsection, String name) {
-    return sec.getStringList(section, subsection, name);
-  }
-
-  @Override
-  public void set(String section, String subsection, String name, String value) {
-    if (value != null) {
-      sec.setString(section, subsection, name, PREFIX + value);
-    } else {
-      sec.unset(section, subsection, name);
+    String[] stringList = sec.getStringList(section, subsection, name);
+    if (stringList != null) {
+      List<String> decrypted = new ArrayList<>(stringList.length);
+      for (String element : stringList) {
+        decrypted.add(element.substring(PREFIX.length()));
+      }
+      return decrypted.toArray(new String[decrypted.size()]);
     }
-    save();
+    return null;
   }
 
   @Override
   public void setList(String section, String subsection, String name,
       List<String> values) {
+    List<String> encrypted = new ArrayList<>(values.size());
+    for (String value : values) {
+      encrypted.add(PREFIX + value);
+    }
     if (values != null) {
-      sec.setStringList(section, subsection, name, values);
+      sec.setStringList(section, subsection, name, encrypted);
     } else {
       sec.unset(section, subsection, name);
     }
@@ -70,6 +65,22 @@ public class SecureStoreLib implements SecureStore {
   public void unset(String section, String subsection, String name) {
     sec.unset(section, subsection, name);
     save();
+  }
+
+  @Override
+  public Iterable<EntryKey> list() {
+    ImmutableSet.Builder<EntryKey> result = ImmutableSet.builder();
+    for (String section : sec.getSections()) {
+      for (String subsection : sec.getSubsections(section)) {
+        for (String name : sec.getNames(section, subsection)) {
+          result.add(new EntryKey(section, subsection, name));
+        }
+      }
+      for (String name : sec.getNames(section)) {
+        result.add(new EntryKey(section, null, name));
+      }
+    }
+    return result.build();
   }
 
   private void save() {
